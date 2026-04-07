@@ -1,0 +1,37 @@
+# Dependências
+node_modules/
+package-lock.json
+
+# Arquivos de ambiente
+.env
+.env.local
+.env.production
+
+# Tokens e sessões do WhatsApp (NÃO subir para o GitHub!)
+tokens/
+*.session
+*.session-*
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Arquivos de teste
+test-*.js
+testar-*.js
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Arquivos temporários
+tmp/
+temp/
+*.tmp

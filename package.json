@@ -1,0 +1,57 @@
+{
+  "name": "salao-vailson-bot",
+  "version": "1.0.0",
+  "description": "Bot com IA para atendimento humanizado do Salão Vailson",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "dev:debug": "nodemon --inspect src/index.js",
+    "pm2": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop salao-vailson-bot",
+    "pm2:logs": "pm2 logs salao-vailson-bot",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "gemini",
+    "ia",
+    "salao",
+    "beauty"
+  ],
+  "author": "Salão Vailson",
+  "license": "ISC",
+  "dependencies": {
+    "@calcom/sdk": "^1.0.1",
+    "@google-cloud/local-auth": "^3.0.1",
+    "@google/generative-ai": "^0.1.3",
+    "@wppconnect-team/wppconnect": "^1.38.0",
+    "axios": "^1.13.5",
+    "dotenv": "^16.3.1",
+    "express": "^5.2.1",
+    "googleapis": "^171.4.0",
+    "moment": "^2.30.1",
+    "mysql2": "^3.20.0",
+    "node-cron": "^3.0.3",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.2",
+    "jest": "^30.2.0",
+    "nodemon": "^3.1.11",
+    "pm2": "^6.0.14"
+  },
+  "nodemonConfig": {
+    "watch": [
+      "src"
+    ],
+    "ext": "js,json",
+    "ignore": [
+      "src/**/*.test.js",
+      "sessions/**",
+      "logs/**"
+    ],
+    "delay": "1000"
+  }
+}
