@@ -941,8 +941,6 @@ setInterval(() => {
     }
 }, 10 * 60 * 1000);
 
-const venom = require('venom-bot');
-
 // ============================================
 // INICIALIZAÇÃO DO BOT (VENOM - SEM CHROME)
 // ============================================
