@@ -1,4 +1,4 @@
-// src/index.js - VERSÃO COMPLETA COM FLUXO INTELIGENTE (TELEFONE → NOME → DADOS ADICIONAIS)
+// src/index.js - VERSÃO COMPLETA E CORRIGIDA COM VERIFICAÇÃO DE CLIENTE E DADOS OPCIONAIS
 require('dotenv').config();
 const wppconnect = require('@wppconnect-team/wppconnect');
 const axios = require('axios');
@@ -128,17 +128,19 @@ class IntegracaoAPI {
 
     async criarCliente(nome, telefone, email = null, data_nascimento = null) {
         try {
-            const telefoneLimpo = telefone.replace('@c.us', '').replace('@lid', '').replace(/\D/g, '');
-            const response = await this.api.post('/clientes/completo', { 
+            const telefoneLimpo = telefone.replace(/\D/g, '');
+            const payload = { 
                 nome: nome.trim(),
-                telefone: telefoneLimpo,
-                email: email,
-                data_nascimento: data_nascimento
-            });
+                telefone: telefoneLimpo
+            };
+            if (email) payload.email = email;
+            if (data_nascimento) payload.data_nascimento = data_nascimento;
+            
+            const response = await this.api.post('/clientes/completo', payload);
             return response.data;
         } catch (error) {
-            console.error('Erro criar cliente:', error.response?.data || error.message);
-            return null;
+            console.error('Erro detalhado ao criar cliente:', error.response?.data || error.message);
+            return { erro: true, mensagem: error.response?.data?.error || 'Erro desconhecido' };
         }
     }
 
@@ -364,6 +366,15 @@ async function processarMensagem(contato, mensagemAtual) {
     const msg = mensagemAtual.toLowerCase().trim();
 
     // ============================================
+    // VERIFICAR FLUXO PENDENTE - Evitar recomeçar agendamento
+    // ============================================
+    if (dados.agendando && (msg.includes('agendar') || msg.includes('marcar'))) {
+        dados.ignorarInicioAgendamento = true;
+    } else {
+        dados.ignorarInicioAgendamento = false;
+    }
+
+    // ============================================
     // CUMPRIMENTOS E CONVERSA CASUAL
     // ============================================
     const cumprimentos = ['oi', 'olá', 'opa', 'e ai', 'hello', 'hi', 'oie'];
@@ -478,7 +489,7 @@ async function processarMensagem(contato, mensagemAtual) {
     // ============================================
     // INICIAR AGENDAMENTO (NOVO FLUXO: TELEFONE PRIMEIRO)
     // ============================================
-    if (msg.includes('agendar') || msg.includes('marcar') || msg.includes('quero um horário') || msg.includes('quero marca')) {
+    if ((msg.includes('agendar') || msg.includes('marcar') || msg.includes('quero um horário') || msg.includes('quero marca')) && !dados.ignorarInicioAgendamento) {
         dados.agendando = true;
         dados.passo = 'solicitar_telefone';
         dados.telefone_fornecido = false;
@@ -577,12 +588,28 @@ async function processarMensagem(contato, mensagemAtual) {
         if (msg.includes('sim')) {
             dados.passo = 'perguntar_dados_adicionais';
             return { mensagem: `✨ Ótimo! Posso adicionar seu **e-mail** e **data de nascimento** ao cadastro? (sim/não)\n\nIsso ajuda a gente a te conhecer melhor e enviar lembretes especiais. 💕` };
-        } else if (msg.includes('não')) {
-            dados.agendando = false;
-            dados.passo = null;
-            return { mensagem: `💕 Sem problemas! Vamos recomeçar. Digite "agendar" quando quiser marcar um horário.` };
-        } else {
-            return { mensagem: `Por favor, responda com "sim" para confirmar o cadastro ou "não" para cancelar.` };
+        } 
+        else if (msg.includes('não')) {
+            // Cadastrar sem dados adicionais e seguir para profissional
+            const resultado = await sistema.criarCliente(dados.nome, dados.telefone_cliente, null, null);
+            
+            if (resultado && resultado.id) {
+                dados.cliente_id = resultado.id;
+                dados.passo = 'profissional';
+                
+                const profissionais = await sistema.buscarProfissionais();
+                dados.profissionais = profissionais;
+                const lista = profissionais.map(p => `✨ *${p.nome}* - ${p.especialidade || 'Profissional'}`).join('\n');
+                
+                return { mensagem: `🎉 Cadastro realizado com sucesso, ${dados.nome.split(' ')[0]}!\n\nAgora me diga:\n\n${lista}\n\nQual profissional você prefere?` };
+            } else {
+                // Se falhar, oferece nova tentativa com dados adicionais
+                const erroMsg = resultado?.mensagem ? ` (${resultado.mensagem})` : '';
+                return { mensagem: `❌ Não foi possível cadastrar${erroMsg}. Deseja tentar informar e-mail e data de nascimento? (sim/não)` };
+            }
+        } 
+        else {
+            return { mensagem: `Por favor, responda com "sim" para adicionar dados extras ou "não" para cadastrar apenas com nome e telefone.` };
         }
     }
 
@@ -593,20 +620,24 @@ async function processarMensagem(contato, mensagemAtual) {
         if (msg.includes('sim')) {
             dados.passo = 'coletar_email';
             return { mensagem: `📧 Qual o seu **e-mail**? (ex: nome@email.com)\n\nSe não quiser informar, digite "pular"` };
-        } else if (msg.includes('não')) {
+        } 
+        else if (msg.includes('não')) {
             // Cadastrar sem dados adicionais
-            const cliente = await sistema.criarCliente(dados.nome, dados.telefone_cliente, null, null);
-            if (cliente && cliente.id) {
-                dados.cliente_id = cliente.id;
+            const resultado = await sistema.criarCliente(dados.nome, dados.telefone_cliente, null, null);
+            
+            if (resultado && resultado.id) {
+                dados.cliente_id = resultado.id;
                 dados.passo = 'profissional';
                 const profissionais = await sistema.buscarProfissionais();
                 dados.profissionais = profissionais;
                 const lista = profissionais.map(p => `✨ *${p.nome}* - ${p.especialidade || 'Profissional'}`).join('\n');
                 return { mensagem: `🎉 Cadastro realizado com sucesso!\n\nAgora me diga:\n\n${lista}\n\nQual profissional você prefere?` };
             } else {
-                return { mensagem: `❌ Erro ao cadastrar. Digite "agendar" para tentar novamente.` };
+                const erroMsg = resultado?.mensagem ? ` (${resultado.mensagem})` : '';
+                return { mensagem: `❌ Erro ao cadastrar${erroMsg}. Vamos recomeçar? Digite "agendar" para tentar novamente.` };
             }
-        } else {
+        } 
+        else {
             return { mensagem: `Responda com "sim" para adicionar e-mail e data de nascimento, ou "não" para continuar sem esses dados.` };
         }
     }
@@ -654,10 +685,10 @@ async function processarMensagem(contato, mensagemAtual) {
             }
         }
         
-        const cliente = await sistema.criarCliente(dados.nome, dados.telefone_cliente, dados.email_cliente, dataNasc);
+        const resultado = await sistema.criarCliente(dados.nome, dados.telefone_cliente, dados.email_cliente, dataNasc);
         
-        if (cliente && cliente.id) {
-            dados.cliente_id = cliente.id;
+        if (resultado && resultado.id) {
+            dados.cliente_id = resultado.id;
             dados.passo = 'profissional';
             const profissionais = await sistema.buscarProfissionais();
             dados.profissionais = profissionais;
@@ -669,7 +700,8 @@ async function processarMensagem(contato, mensagemAtual) {
             
             return { mensagem: `🎉 Cadastro completo! ${msgExtra}\n\nSeja bem-vindo(a), ${dados.nome.split(' ')[0]}!\n\nAgora me diga:\n\n${lista}\n\nQual profissional você prefere?` };
         } else {
-            return { mensagem: `❌ Desculpe, tive um problema ao cadastrar. Digite "agendar" para recomeçar.` };
+            const erroMsg = resultado?.mensagem ? ` (${resultado.mensagem})` : '';
+            return { mensagem: `❌ Erro ao cadastrar${erroMsg}. Digite "agendar" para tentar novamente.` };
         }
     }
     
