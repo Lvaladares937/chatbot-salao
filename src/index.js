@@ -959,7 +959,6 @@ async function iniciarBot() {
     venom.create({
         session: 'salao-bot',
         headless: true,
-        useChrome: false,
         debug: false,
         logQR: true,
         browserWS: '',
