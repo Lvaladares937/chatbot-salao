@@ -1,6 +1,9 @@
 {
   "build": {
-    "builder": "DOCKERFILE"
+    "builder": "NIXPACKS",
+    "nixpacksConfig": {
+      "nodeVersion": "20"
+    }
   },
   "deploy": {
     "startCommand": "node src/index.js",
