@@ -1,6 +1,5 @@
 FROM node:18-slim
 
-# Instalar dependências do Chromium
 RUN apt-get update && apt-get install -y \
     chromium \
     libnss3 \
@@ -21,27 +20,18 @@ RUN apt-get update && apt-get install -y \
     libx11-6 \
     libxcb1 \
     libglib2.0-0 \
-    libgobject-2.0-0 \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Definir caminho do Chromium
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Criar diretório da aplicação
 WORKDIR /app
 
-# Copiar arquivos de dependências
 COPY package*.json ./
+RUN npm install
 
-# Instalar dependências Node.js
-RUN npm install --omit=dev
-
-# Copiar o resto da aplicação
 COPY . .
 
-# Expor porta
 EXPOSE 8080
 
-# Iniciar o bot
 CMD ["node", "src/index.js"]
