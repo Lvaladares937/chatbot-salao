@@ -1,35 +1,7 @@
-// src/index.js - VERSÃO CORRIGIDA PARA HOSTINGER
+// src/index.js - VERSÃO COMPLETA COM FLUXO INTELIGENTE (TELEFONE → NOME → DADOS ADICIONAIS)
 require('dotenv').config();
-const venom = require('venom-bot');  // ← Deve ser venom, não wppconnect
+const wppconnect = require('@wppconnect-team/wppconnect');
 const axios = require('axios');
-const express = require('express');
-
-
-// Aumentar timeout
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
-// ============================================
-// SERVIDOR EXPRESS (para manter o bot vivo)
-// ============================================
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get('/', (req, res) => {
-    res.json({
-        status: 'online',
-        bot: 'Vailson\'s Hair Bot',
-        versao: '1.0.0',
-        timestamp: new Date().toISOString()
-    });
-});
-
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', uptime: process.uptime() });
-});
-
-app.listen(PORT, () => {
-    console.log(`🌐 Web server rodando na porta ${PORT}`);
-});
 
 // ============================================
 // CONFIGURAÇÕES
@@ -38,7 +10,7 @@ const API_URL = process.env.API_URL || 'http://localhost:3000/api/bot';
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 
 // ============================================
-// CLIENTE DEEPSEEK
+// CLIENTE DEEPSEEK COM CONTEXTO INTELIGENTE
 // ============================================
 class DeepSeekClient {
     constructor(apiKey) {
@@ -59,14 +31,13 @@ class DeepSeekClient {
                 {
                     model: 'deepseek-chat',
                     messages: mensagens,
-                    temperature: 0.7,
-                    max_tokens: 2000
+                    temperature: 0.9,
+                    max_tokens: 800
                 },
                 this.config
             );
             return { sucesso: true, resposta: response.data.choices[0].message.content };
         } catch (error) {
-            console.error('❌ Erro na API DeepSeek:', error.message);
             return { sucesso: false };
         }
     }
@@ -79,7 +50,7 @@ const deepseek = new DeepSeekClient(DEEPSEEK_API_KEY);
 // ============================================
 class IntegracaoAPI {
     constructor() {
-        this.api = axios.create({ baseURL: API_URL, timeout: 30000 });
+        this.api = axios.create({ baseURL: API_URL, timeout: 15000 });
     }
 
     async testarConexao() {
@@ -98,6 +69,7 @@ class IntegracaoAPI {
             const response = await this.api.get('/servicos');
             return response.data || [];
         } catch (error) {
+            console.error('Erro buscar serviços:', error.message);
             return [];
         }
     }
@@ -107,6 +79,7 @@ class IntegracaoAPI {
             const response = await this.api.get('/profissionais');
             return response.data || [];
         } catch (error) {
+            console.error('Erro buscar profissionais:', error.message);
             return [];
         }
     }
@@ -118,6 +91,7 @@ class IntegracaoAPI {
             const response = await this.api.get(url);
             return response.data || { dias_disponiveis: [] };
         } catch (error) {
+            console.error('Erro buscar agenda:', error.message);
             return { dias_disponiveis: [] };
         }
     }
@@ -133,25 +107,18 @@ class IntegracaoAPI {
         }
     }
 
-    async buscarClientePorTelefone(telefone) {
+    async buscarCliente(telefone, nome = null) {
         try {
-            let telefoneLimpo = String(telefone).replace(/\D/g, '');
+            const telefoneLimpo = telefone ? telefone.replace('@c.us', '').replace('@lid', '').replace(/\D/g, '') : null;
             
-            if (telefoneLimpo.length === 10) {
-                telefoneLimpo = telefoneLimpo.substring(0, 2) + '9' + telefoneLimpo.substring(2);
+            if (telefoneLimpo) {
+                let response = await this.api.get(`/clientes/buscar?telefone=${telefoneLimpo}`);
+                if (response.data && response.data.length > 0) return response.data[0];
             }
             
-            if (telefoneLimpo.startsWith('55')) {
-                telefoneLimpo = telefoneLimpo.substring(2);
-            }
-            
-            if (telefoneLimpo.length > 11) {
-                telefoneLimpo = telefoneLimpo.slice(-11);
-            }
-            
-            const response = await this.api.get(`/clientes/buscar?telefone=${telefoneLimpo}`);
-            if (response.data && response.data.length > 0) {
-                return response.data[0];
+            if (nome && nome.length > 3) {
+                const response = await this.api.get(`/clientes/buscar?nome=${encodeURIComponent(nome)}`);
+                if (response.data && response.data.length > 0) return response.data[0];
             }
             return null;
         } catch (error) {
@@ -159,35 +126,29 @@ class IntegracaoAPI {
         }
     }
 
-    async buscarClientePorNome(nome) {
+    async criarCliente(nome, telefone, email = null, data_nascimento = null) {
         try {
-            const response = await this.api.get(`/clientes/buscar?nome=${encodeURIComponent(nome)}`);
-            if (response.data && response.data.length > 0) {
-                return response.data[0];
-            }
-            return null;
-        } catch (error) {
-            return null;
-        }
-    }
-
-    async criarCliente(nome, telefone, email = null) {
-        try {
-            let telefoneLimpo = String(telefone).replace(/\D/g, '');
-            
-            if (telefoneLimpo.length === 10) {
-                telefoneLimpo = telefoneLimpo.substring(0, 2) + '9' + telefoneLimpo.substring(2);
-            }
-            
+            const telefoneLimpo = telefone.replace('@c.us', '').replace('@lid', '').replace(/\D/g, '');
             const response = await this.api.post('/clientes/completo', { 
                 nome: nome.trim(),
                 telefone: telefoneLimpo,
-                email: email
+                email: email,
+                data_nascimento: data_nascimento
             });
-            
             return response.data;
         } catch (error) {
-            console.error('❌ Erro criar cliente:', error.message);
+            console.error('Erro criar cliente:', error.response?.data || error.message);
+            return null;
+        }
+    }
+
+    async atualizarTelefoneCliente(cliente_id, telefone) {
+        try {
+            const telefoneLimpo = telefone.replace(/\D/g, '');
+            const response = await this.api.put(`/clientes/${cliente_id}/telefone`, { telefone: telefoneLimpo });
+            return response.data;
+        } catch (error) {
+            console.error('Erro atualizar telefone:', error.message);
             return null;
         }
     }
@@ -215,7 +176,7 @@ class IntegracaoAPI {
             const response = await this.api.post('/agendamentos', dados);
             return response.data;
         } catch (error) {
-            console.error('Erro criar agendamento:', error.message);
+            console.error('Erro criar agendamento:', error.response?.data || error.message);
             return null;
         }
     }
@@ -230,32 +191,6 @@ class IntegracaoAPI {
                 endereco: "Asa Sul CLS 210 Bloco B Loja 18 - Brasília",
                 telefone: "(61) 3244-4181"
             };
-        }
-    }
-
-    async atualizarTelefoneCliente(cliente_id, novoTelefone) {
-        try {
-            let telefoneLimpo = String(novoTelefone).replace(/\D/g, '');
-            
-            if (telefoneLimpo.length === 10) {
-                telefoneLimpo = telefoneLimpo.substring(0, 2) + '9' + telefoneLimpo.substring(2);
-            }
-            
-            if (telefoneLimpo.startsWith('55')) {
-                telefoneLimpo = telefoneLimpo.substring(2);
-            }
-            
-            if (telefoneLimpo.length > 11) {
-                telefoneLimpo = telefoneLimpo.slice(-11);
-            }
-            
-            console.log('📞 Atualizando telefone do cliente:', cliente_id, 'para:', telefoneLimpo);
-            
-            const response = await this.api.put(`/clientes/${cliente_id}/telefone`, { telefone: telefoneLimpo });
-            return response.data && response.data.success;
-        } catch (error) {
-            console.error('❌ Erro ao atualizar telefone:', error.message);
-            return false;
         }
     }
 }
@@ -280,154 +215,134 @@ function formatarDataBrasil(dataStr) {
     return { dataFormatada: `${dia}/${mes}/${ano}`, diaSemana: diasSemana[dataObj.getDay()] };
 }
 
-// ============================================
-// FUNÇÕES DE AÇÃO (executadas pela IA)
-// ============================================
-
-async function executarAgendamento(contato, dados, profissional_nome, data_str, horario_str, servico_nome) {
-    try {
-        const profissionais = await sistema.buscarProfissionais();
-        const profissional = profissionais.find(p => 
-            p.nome.toLowerCase().includes(profissional_nome.toLowerCase())
-        );
-        
-        if (!profissional) {
-            return { sucesso: false, mensagem: `Não encontrei o profissional ${profissional_nome}.` };
+function buscarServicoPorNome(servicos, nomeBuscado) {
+    const nomeLower = nomeBuscado.toLowerCase().trim();
+    
+    let encontrado = servicos.find(s => s.nome.toLowerCase() === nomeLower);
+    if (encontrado) return encontrado;
+    
+    encontrado = servicos.find(s => s.nome.toLowerCase().includes(nomeLower));
+    if (encontrado) return encontrado;
+    
+    const palavras = nomeLower.split(' ');
+    for (const servico of servicos) {
+        const servicoLower = servico.nome.toLowerCase();
+        if (palavras.some(palavra => servicoLower.includes(palavra))) {
+            return servico;
         }
-        
-        const servicos = await sistema.buscarServicos();
-        const servico = servicos.find(s => 
-            s.nome.toLowerCase().includes(servico_nome.toLowerCase())
-        );
-        
-        if (!servico) {
-            return { sucesso: false, mensagem: `Não encontrei o serviço ${servico_nome}.` };
-        }
-        
-        const disponivel = await sistema.verificarDisponibilidade(profissional.id, data_str, horario_str);
-        
-        if (!disponivel) {
-            return { sucesso: false, mensagem: `O horário ${horario_str} do dia ${data_str} não está mais disponível.` };
-        }
-        
-        const resultado = await sistema.criarAgendamento({
-            nome_cliente: dados.nome || 'Cliente',
-            telefone_cliente: contato,
-            cliente_id: dados.cliente_id,
-            servico_id: servico.id,
-            data: data_str,
-            horario: horario_str,
-            profissional_id: profissional.id
-        });
-        
-        if (resultado && resultado.id) {
-            const { dataFormatada, diaSemana } = formatarDataBrasil(data_str);
-            return { 
-                sucesso: true, 
-                mensagem: `🎉 *AGENDAMENTO CONFIRMADO!* 🎉\n\n` +
-                    `✨ *Profissional:* ${profissional.nome}\n` +
-                    `📅 *Data:* ${dataFormatada} (${diaSemana})\n` +
-                    `⏰ *Horário:* ${horario_str}\n` +
-                    `💇 *Serviço:* ${servico.nome}\n` +
-                    `💰 *Valor:* R$ ${parseFloat(servico.preco).toFixed(2)}\n\n` +
-                    `📍 *Local:* ${SALAO.endereco}\n` +
-                    `📞 *Telefone:* ${SALAO.telefone}\n\n` +
-                    `💕 Qualquer dúvida é só chamar!` 
-            };
-        }
-        
-        return { sucesso: false, mensagem: `Erro ao criar agendamento. Por favor, ligue para ${SALAO.telefone}.` };
-        
-    } catch (error) {
-        console.error('Erro no agendamento:', error);
-        return { sucesso: false, mensagem: `Erro ao processar agendamento. Tente novamente.` };
     }
+    
+    return null;
 }
 
-// ============================================
-// FUNÇÃO PARA LISTAR SERVIÇOS (SEM IA)
-// ============================================
-async function listarServicosPorCategoria(contato, pagina = 1) {
-    const servicos = await sistema.buscarServicos();
+function gerarMensagemBoasVindas(nome) {
+    if (!nome || nome === 'Corte') nome = 'você';
+    const mensagens = [
+        `✨ Oi ${nome}! Que bom te ver por aqui! 💕`,
+        `🥰 Olá ${nome}! Como posso deixar seu dia mais lindo hoje?`,
+        `💖 ${nome}! Seja bem-vindo(a) ao ${SALAO.nome}! Vamos te deixar ainda mais maravilhoso(a)?`,
+        `🌸 Oii ${nome}! Preparada(o) para se sentir ainda mais especial?`
+    ];
+    return mensagens[Math.floor(Math.random() * mensagens.length)];
+}
+
+function gerarMensagemDespedida(nome) {
+    if (!nome || nome === 'Corte' || nome.length < 2) nome = 'você';
+    const mensagens = [
+        `💕 Te aguardo com muito carinho, ${nome}!`,
+        `✨ Até mais, ${nome}! Qualquer coisa é só chamar!`,
+        `🌸 Foi um prazer falar com você, ${nome}! Tenha um lindo dia!`,
+        `🥰 Qualquer dúvida estou aqui, ${nome}!`
+    ];
+    return mensagens[Math.floor(Math.random() * mensagens.length)];
+}
+
+async function mostrarMaisServicos(dados, pagina = 1) {
+    const servicos = dados.servicos;
+    const itensPorPagina = 20;
+    const totalPaginas = Math.ceil(servicos.length / itensPorPagina);
     
-    if (!servicos || servicos.length === 0) {
-        return { mensagem: `💕 Desculpe, não consegui carregar a lista de serviços no momento.` };
-    }
-    
-    const categorias = {
-        'Cabelo': [],
-        'Barbearia': [],
-        'Manicure e Pedicure': [],
-        'Estética Facial': [],
-        'Estética Corporal': [],
-        'Depilação': [],
-        'Maquiagem': [],
-        'Sobrancelha': [],
-        'Outros': []
-    };
-    
-    for (const s of servicos) {
-        const categoria = s.categoria || 'Outros';
-        if (categorias[categoria]) {
-            categorias[categoria].push(s);
-        } else {
-            categorias['Outros'].push(s);
-        }
-    }
-    
-    const categoriasExistentes = Object.entries(categorias).filter(([_, servs]) => servs.length > 0);
-    const itensPorPagina = 3;
-    const totalPaginas = Math.ceil(categoriasExistentes.length / itensPorPagina);
     if (pagina > totalPaginas) pagina = totalPaginas;
     if (pagina < 1) pagina = 1;
     
     const inicio = (pagina - 1) * itensPorPagina;
-    const categoriasPagina = categoriasExistentes.slice(inicio, inicio + itensPorPagina);
+    const fim = inicio + itensPorPagina;
+    const servicosPagina = servicos.slice(inicio, fim);
     
-    let mensagem = `📋 *SERVIÇOS DO SALÃO* (Página ${pagina} de ${totalPaginas})\n\n`;
+    const lista = servicosPagina.map(s => `💇 *${s.nome}* - R$ ${parseFloat(s.preco).toFixed(2)}`).join('\n');
     
-    for (const [categoria, servs] of categoriasPagina) {
-        mensagem += `✨ *${categoria.toUpperCase()}*\n`;
-        const servicosLista = servs.slice(0, 10).map(s => `   • ${s.nome}: R$ ${parseFloat(s.preco).toFixed(2)}`).join('\n');
-        mensagem += servicosLista;
-        if (servs.length > 10) {
-            mensagem += `\n   ... e mais ${servs.length - 10} serviços\n`;
-        }
-        mensagem += `\n`;
+    let mensagem = `📋 *NOSSOS SERVIÇOS* (Página ${pagina} de ${totalPaginas})\n\n${lista}`;
+    
+    if (pagina < totalPaginas) {
+        mensagem += `\n\n➡️ Digite "próximos" para ver mais serviços`;
+    }
+    if (pagina > 1) {
+        mensagem += `\n⬅️ Digite "voltar" para ver serviços anteriores`;
     }
     
-    if (totalPaginas > 1) {
-        mensagem += `\n➡️ Digite "próximos serviços" para ver mais categorias`;
-        if (pagina > 1) {
-            mensagem += `\n⬅️ Digite "voltar serviços" para ver anteriores`;
+    mensagem += `\n\n💬 Qual serviço você gostaria de fazer hoje?`;
+    
+    return { mensagem, paginaAtual: pagina };
+}
+
+async function verAgendamentos(contato, dados) {
+    let cliente = dados.cliente_id ? { id: dados.cliente_id } : await sistema.buscarCliente(contato, dados.nome);
+    
+    if (!cliente && dados.nome && dados.nome !== 'Corte') {
+        cliente = await sistema.buscarCliente(contato, dados.nome);
+    }
+    
+    if (!cliente) {
+        return { mensagem: `💕 Para ver seus agendamentos, poderia me informar seu nome completo? Assim consigo encontrar certinho!` };
+    }
+    
+    dados.nome = cliente.nome;
+    dados.cliente_id = cliente.id;
+    
+    const agendamentos = await sistema.buscarAgendamentosCliente(cliente.id);
+    const agora = new Date();
+    
+    const agendamentosFuturos = agendamentos.filter(a => new Date(a.data_hora) > agora && a.status !== 'cancelado' && a.status !== 'cancelado_cliente');
+    const agendamentosPassados = agendamentos.filter(a => new Date(a.data_hora) <= agora || a.status === 'cancelado' || a.status === 'cancelado_cliente');
+    
+    if (agendamentosFuturos.length === 0 && agendamentosPassados.length === 0) {
+        return { mensagem: `✨ ${cliente.nome.split(' ')[0]}, você ainda não tem nenhum agendamento conosco! Que tal marcarmos algo especial? Digite "agendar" para começarmos 🥰` };
+    }
+    
+    let mensagem = `📋 *SEUS AGENDAMENTOS*\n\n`;
+    
+    if (agendamentosFuturos.length > 0) {
+        mensagem += `✨ *PRÓXIMOS COMPROMISSOS:*\n`;
+        for (const ag of agendamentosFuturos) {
+            const dataHora = new Date(ag.data_hora);
+            const dataStr = dataHora.toLocaleDateString('pt-BR');
+            const horaStr = dataHora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            mensagem += `\n📅 *${dataStr}* às *${horaStr}*\n`;
+            mensagem += `👤 ${ag.profissional_nome || 'Profissional'}\n`;
+            mensagem += `💇 ${ag.servico_nome || 'Serviço'}\n`;
+            mensagem += `💰 R$ ${ag.preco || '--'}\n`;
+            mensagem += `➖➖➖➖➖➖➖➖\n`;
         }
     }
     
-    mensagem += `\n\n💬 Digite o nome do serviço que você quer para mais detalhes!`;
+    if (agendamentosPassados.length > 0) {
+        mensagem += `\n📜 *HISTÓRICO:*\n`;
+        const ultimos5 = agendamentosPassados.slice(-5);
+        for (const ag of ultimos5) {
+            const dataHora = new Date(ag.data_hora);
+            const dataStr = dataHora.toLocaleDateString('pt-BR');
+            const status = (ag.status === 'cancelado' || ag.status === 'cancelado_cliente') ? '❌ Cancelado' : '✅ Realizado';
+            mensagem += `\n📅 ${dataStr} - ${ag.servico_nome || 'Serviço'} (${status})\n`;
+        }
+    }
     
-    return { mensagem, paginaAtual: pagina, totalPaginas };
+    mensagem += `\n💖 Quer marcar um novo horário? É só digitar "agendar"!`;
+    
+    return { mensagem, cliente };
 }
 
 // ============================================
-// FUNÇÃO PARA BUSCAR SERVIÇO ESPECÍFICO
-// ============================================
-async function buscarServicoDetalhado(nomeBuscado) {
-    const servicos = await sistema.buscarServicos();
-    const servico = servicos.find(s => 
-        s.nome.toLowerCase().includes(nomeBuscado.toLowerCase())
-    );
-    
-    if (!servico) return null;
-    
-    return `💇 *${servico.nome}*\n` +
-           `📝 ${servico.descricao || 'Sem descrição'}\n` +
-           `💰 *Preço:* R$ ${parseFloat(servico.preco).toFixed(2)}\n` +
-           `⏱️ *Duração:* ${servico.duracao || 30} minutos\n` +
-           `👤 *Comissão:* ${servico.comissao_profissional || 30}%`;
-}
-
-// ============================================
-// PROCESSAR MENSAGEM
+// FUNÇÃO PRINCIPAL HUMANIZADA
 // ============================================
 async function processarMensagem(contato, mensagemAtual) {
     if (!mensagemAtual) return null;
@@ -435,15 +350,9 @@ async function processarMensagem(contato, mensagemAtual) {
     let conversa = conversas.get(contato);
     if (!conversa) {
         conversa = {
-            dados: { 
-                historico: [],
-                nome: null,
-                cliente_id: null,
-                telefone: null,
-                paginaServicos: 1,
-                passo: null
-            },
+            dados: {},
             ultimaAtualizacao: new Date(),
+            ultimoAgendamento: null,
             interacoes: 0
         };
         conversas.set(contato, conversa);
@@ -453,100 +362,322 @@ async function processarMensagem(contato, mensagemAtual) {
     conversa.interacoes++;
     const dados = conversa.dados;
     const msg = mensagemAtual.toLowerCase().trim();
-    
-    dados.historico.push({ role: 'user', content: mensagemAtual });
-    if (dados.historico.length > 10) dados.historico.shift();
-    
-    // ============================================
-    // FLUXO MANUAL DE AGENDAMENTO
-    // ============================================
 
-    if (dados.passo === 'telefone') {
-        const telefoneMatch = mensagemAtual.match(/(\d{10,11})/);
-        if (telefoneMatch) {
-            dados.telefone = telefoneMatch[1];
-            console.log(`🔍 Buscando cliente pelo telefone: ${dados.telefone}`);
-            let cliente = await sistema.buscarClientePorTelefone(dados.telefone);
+    // ============================================
+    // CUMPRIMENTOS E CONVERSA CASUAL
+    // ============================================
+    const cumprimentos = ['oi', 'olá', 'opa', 'e ai', 'hello', 'hi', 'oie'];
+    if (cumprimentos.some(c => msg === c || msg.startsWith(c))) {
+        if (dados.nome && dados.nome !== 'Corte') {
+            return { mensagem: `${gerarMensagemBoasVindas(dados.nome.split(' ')[0])} Como posso te ajudar hoje? 😊` };
+        }
+        return { mensagem: `✨ Oi! Seja bem-vindo(a) ao ${SALAO.nome}! 💕\n\nPosso ajudar você a agendar um horário ou tirar alguma dúvida?` };
+    }
+
+    const agradecimentos = ['obrigado', 'valeu', 'gratidão', 'brigado', 'obg', 'obrigada'];
+    if (agradecimentos.some(a => msg.includes(a))) {
+        const respostas = [
+            `💖 Por nada! Fico feliz em ajudar!`,
+            `🥰 Disponha! Estou sempre aqui para você!`,
+            `✨ Imagina! Foi um prazer te atender!`
+        ];
+        return { mensagem: respostas[Math.floor(Math.random() * respostas.length)] };
+    }
+
+    // ============================================
+    // VER AGENDAMENTOS
+    // ============================================
+    if (msg.includes('ver meus agendamentos') || msg.includes('meus agendamentos') || msg.includes('consultar agendamento')) {
+        const resultado = await verAgendamentos(contato, dados);
+        return { mensagem: resultado.mensagem };
+    }
+
+    // ============================================
+    // CANCELAMENTO
+    // ============================================
+    if (msg.includes('cancelar') || msg.includes('desmarcar')) {
+        dados.cancelando = true;
+        return { mensagem: `💕 Claro! Posso te ajudar com isso. Para cancelar, poderia me informar seu nome completo primeiro?` };
+    }
+    
+    if (dados.cancelando && !dados.nome) {
+        if (mensagemAtual.length >= 3) {
+            dados.nome = mensagemAtual.trim();
+            dados.cancelando = false;
+            
+            const cliente = await sistema.buscarCliente(contato, dados.nome);
+            if (!cliente) {
+                return { mensagem: `💔 Não encontrei nenhum agendamento no nome "${dados.nome}". Você já agendou algo conosco antes?` };
+            }
+            
+            dados.cliente_id = cliente.id;
+            dados.nome = cliente.nome;
+            
+            const agendamentos = await sistema.buscarAgendamentosCliente(cliente.id);
+            const futuros = agendamentos.filter(a => new Date(a.data_hora) > new Date() && a.status !== 'cancelado' && a.status !== 'cancelado_cliente');
+            
+            if (futuros.length === 0) {
+                return { mensagem: `✨ ${dados.nome.split(' ')[0]}, você não tem agendamentos futuros no momento. Quer marcar um novo? Digite "agendar" 🥰` };
+            }
+            
+            const lista = futuros.map((ag, i) => {
+                const data = new Date(ag.data_hora).toLocaleDateString('pt-BR');
+                const hora = new Date(ag.data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                return `${i+1} - 📅 ${data} às ${hora} - ${ag.servico_nome}`;
+            }).join('\n');
+            
+            dados.agendamentosParaCancelar = futuros;
+            dados.aguardandoCancelamento = true;
+            
+            return { mensagem: `📋 Encontrei esses agendamentos no seu nome:\n\n${lista}\n\nQual deles você gostaria de cancelar? (Digite o número)` };
+        }
+        return { mensagem: `💕 Poderia me informar seu nome completo para eu buscar seus agendamentos?` };
+    }
+    
+    if (dados.aguardandoCancelamento && dados.agendamentosParaCancelar) {
+        const num = parseInt(msg);
+        if (num >= 1 && num <= dados.agendamentosParaCancelar.length) {
+            const ag = dados.agendamentosParaCancelar[num - 1];
+            await sistema.cancelarAgendamento(ag.id);
+            dados.aguardandoCancelamento = false;
+            dados.agendamentosParaCancelar = null;
+            return { mensagem: `✅ Agendamento cancelado com sucesso! Sinto muito por não podermos te atender dessa vez. Se quiser remarcar, é só digitar "agendar" 💖` };
+        }
+        return { mensagem: `💕 Digite apenas o número do agendamento que deseja cancelar, por favor.` };
+    }
+
+    // ============================================
+    // AJUDA
+    // ============================================
+    if (msg.includes('ajuda') || msg.includes('o que você faz') || msg.includes('comandos')) {
+        return { mensagem: `✨ *Posso te ajudar com:*\n\n` +
+            `📅 *Agendar* - Marcar um horário\n` +
+            `📋 *Ver meus agendamentos* - Consultar seus horários\n` +
+            `❌ *Cancelar* - Desmarcar um agendamento\n` +
+            `💇 *Serviços* - Ver lista de serviços\n` +
+            `📍 *Endereço* - Como chegar até nós\n` +
+            `📞 *Contato* - Telefone do salão\n\n` +
+            `Como posso te ajudar hoje? 😊` };
+    }
+
+    // ============================================
+    // INFORMAÇÕES DO SALÃO
+    // ============================================
+    if (msg.includes('endereço') || msg.includes('localização') || msg.includes('onde fica')) {
+        return { mensagem: `📍 *${SALAO.nome}*\n\n${SALAO.endereco}\n\n📞 Telefone: ${SALAO.telefone}\n\nTe esperamos por lá! 🥰` };
+    }
+    
+    if (msg.includes('telefone') || msg.includes('contato') || msg.includes('número')) {
+        return { mensagem: `📞 Nosso telefone para contato é ${SALAO.telefone}\n\nEstamos à disposição! 💕` };
+    }
+    
+    if (msg.includes('horário') || msg.includes('funcionamento')) {
+        return { mensagem: `🕐 *Horário de funcionamento:*\n\nSegunda a Sexta: 9h às 19h\nSábado: 9h às 17h\nDomingo: Fechado\n\nQual dia seria melhor para você? 😊` };
+    }
+
+    // ============================================
+    // INICIAR AGENDAMENTO (NOVO FLUXO: TELEFONE PRIMEIRO)
+    // ============================================
+    if (msg.includes('agendar') || msg.includes('marcar') || msg.includes('quero um horário') || msg.includes('quero marca')) {
+        dados.agendando = true;
+        dados.passo = 'solicitar_telefone';
+        dados.telefone_fornecido = false;
+        return { mensagem: `📱 Que ótimo! Vamos agendar seu horário com carinho.\n\nPara começar, me informe seu **telefone com DDD** (apenas números):\n\nExemplo: 61999999999\n\nAssim consigo verificar se você já é cliente. 💕` };
+    }
+
+    // ============================================
+    // COLETAR TELEFONE PARA AGENDAMENTO
+    // ============================================
+    if (dados.agendando && dados.passo === 'solicitar_telefone' && !dados.telefone_fornecido) {
+        let telefoneDigitado = mensagemAtual.replace(/\D/g, '');
+        
+        if (telefoneDigitado.length >= 10 && telefoneDigitado.length <= 11) {
+            if (telefoneDigitado.length === 10) {
+                telefoneDigitado = telefoneDigitado.substring(0, 2) + '9' + telefoneDigitado.substring(2);
+            }
+            
+            dados.telefone_cliente = telefoneDigitado;
+            dados.telefone_fornecido = true;
+            
+            let cliente = await sistema.buscarCliente(telefoneDigitado);
             
             if (cliente) {
                 dados.cliente_id = cliente.id;
                 dados.nome = cliente.nome;
                 dados.passo = 'profissional';
+                
                 const profissionais = await sistema.buscarProfissionais();
+                dados.profissionais = profissionais;
                 const lista = profissionais.map(p => `✨ *${p.nome}* - ${p.especialidade || 'Profissional'}`).join('\n');
-                return { mensagem: `✅ Cliente encontrado! Olá ${dados.nome.split(' ')[0]}! 👋\n\n${lista}\n\nQual profissional você prefere?` };
+                
+                return { mensagem: `${gerarMensagemBoasVindas(dados.nome.split(' ')[0])}\n\nQue bom! Já encontrei seu cadastro. Agora me diga:\n\n${lista}\n\nQual profissional você prefere?` };
             } else {
-                dados.passo = 'nome';
-                return { mensagem: `🔍 Nenhum cliente encontrado com o telefone ${dados.telefone}.\n\n📝 Por favor, me informe seu *nome completo* para verificar se você já está cadastrado:` };
+                dados.passo = 'solicitar_nome_apos_telefone';
+                return { mensagem: `🔍 Não encontrei nenhum cliente com o telefone ${telefoneDigitado}.\n\nQual é o seu **nome completo** para eu verificar novamente?` };
             }
+        } else {
+            return { mensagem: `📱 Oops! O número deve ter DDD e 8 ou 9 dígitos. Exemplo: 61999999999\n\nPor favor, digite apenas os números.` };
         }
-        return { mensagem: `📞 Número inválido. Digite com DDD (ex: 61999999999):` };
     }
 
-    if (dados.passo === 'nome') {
-        if (mensagemAtual.length >= 5) {
-            const nomeBuscado = mensagemAtual.trim();
-            console.log(`🔍 Buscando cliente pelo nome: ${nomeBuscado}`);
-            let cliente = await sistema.buscarClientePorNome(nomeBuscado);
+    // ============================================
+    // COLETAR NOME APÓS TELEFONE NÃO ENCONTRADO
+    // ============================================
+    if (dados.agendando && dados.passo === 'solicitar_nome_apos_telefone' && !dados.nome) {
+        if (mensagemAtual.length >= 3) {
+            const nomeDigitado = mensagemAtual.trim();
+            
+            let cliente = await sistema.buscarCliente(null, nomeDigitado);
             
             if (cliente) {
                 dados.cliente_id = cliente.id;
                 dados.nome = cliente.nome;
-                
-                const telefoneCadastrado = String(cliente.telefone).replace(/\D/g, '');
-                if (telefoneCadastrado !== dados.telefone) {
-                    await sistema.atualizarTelefoneCliente(cliente.id, dados.telefone);
-                    console.log(`📞 Telefone atualizado: ${telefoneCadastrado} -> ${dados.telefone}`);
-                    return { mensagem: `✅ Encontrei você no sistema, ${dados.nome.split(' ')[0]}! Seu telefone foi atualizado para ${dados.telefone}. Vamos continuar!` };
-                }
-                
-                dados.passo = 'profissional';
-                const profissionais = await sistema.buscarProfissionais();
-                const lista = profissionais.map(p => `✨ *${p.nome}* - ${p.especialidade || 'Profissional'}`).join('\n');
-                return { mensagem: `✅ Cliente encontrado! Olá ${dados.nome.split(' ')[0]}! 👋\n\n${lista}\n\nQual profissional você prefere?` };
+                dados.passo = 'confirmar_atualizacao_telefone';
+                return { mensagem: `✅ Encontrei seu cadastro no nome ${cliente.nome}!\n\nMas o telefone que tenho aqui é ${cliente.telefone}. Deseja atualizar para ${dados.telefone_cliente}? (sim/não)\n\nVocê pode pular essa etapa digitando "não" e continuar.` };
             } else {
-                dados.nome = nomeBuscado;
-                dados.passo = 'cadastro_email';
-                return { mensagem: `🔍 Não encontrei nenhum cliente com o nome "${nomeBuscado}" nem com o telefone ${dados.telefone}.\n\n📝 Vamos fazer seu cadastro rapidinho!\n\n📧 Me informe seu *email* (ou digite "pular"):` };
+                dados.nome = nomeDigitado;
+                dados.passo = 'confirmar_cadastro';
+                return { mensagem: `✨ Não encontrei nenhum cliente com o nome "${nomeDigitado}".\n\nVou cadastrar você como *${nomeDigitado}* com o telefone *${dados.telefone_cliente}*. Está correto? (sim/não)` };
             }
+        } else {
+            return { mensagem: `💕 Por favor, digite seu nome completo (pelo menos 3 caracteres).` };
         }
-        return { mensagem: `📝 Digite seu nome completo (mínimo 5 caracteres):` };
     }
 
-    if (dados.passo === 'cadastro_email') {
-        const email = mensagemAtual.trim();
-        if (email.toLowerCase() === 'pular' || email.toLowerCase() === 'nao tenho') {
-            dados.email = null;
-        } else if (email.includes('@')) {
-            dados.email = email;
+    // ============================================
+    // CONFIRMAR ATUALIZAÇÃO DE TELEFONE
+    // ============================================
+    if (dados.agendando && dados.passo === 'confirmar_atualizacao_telefone') {
+        if (msg.includes('sim')) {
+            await sistema.atualizarTelefoneCliente(dados.cliente_id, dados.telefone_cliente);
+            dados.passo = 'profissional';
+            
+            const profissionais = await sistema.buscarProfissionais();
+            dados.profissionais = profissionais;
+            const lista = profissionais.map(p => `✨ *${p.nome}* - ${p.especialidade || 'Profissional'}`).join('\n');
+            
+            return { mensagem: `✅ Telefone atualizado com sucesso!\n\nAgora, ${dados.nome.split(' ')[0]}, qual profissional você prefere?\n\n${lista}` };
+        } else if (msg.includes('não')) {
+            dados.passo = 'profissional';
+            
+            const profissionais = await sistema.buscarProfissionais();
+            dados.profissionais = profissionais;
+            const lista = profissionais.map(p => `✨ *${p.nome}* - ${p.especialidade || 'Profissional'}`).join('\n');
+            
+            return { mensagem: `Tudo bem! Vamos manter o telefone antigo.\n\nAgora, ${dados.nome.split(' ')[0]}, qual profissional você prefere?\n\n${lista}` };
+        } else {
+            return { mensagem: `Por favor, responda com "sim" para atualizar o telefone ou "não" para continuar sem atualizar.` };
         }
-        dados.passo = 'cadastro_confirmar';
-        return { mensagem: `📋 *Confirme seus dados para cadastro:*\n\n👤 Nome: ${dados.nome}\n📞 Telefone: ${dados.telefone}\n📧 Email: ${dados.email || 'Não informado'}\n\nDigite *CONFIRMAR* para finalizar o cadastro, ou *CANCELAR* para voltar.` };
     }
 
-    if (dados.passo === 'cadastro_confirmar') {
-        if (msg.includes('confirmar')) {
-            const cliente = await sistema.criarCliente(dados.nome, dados.telefone, dados.email);
+    // ============================================
+    // CONFIRMAR CADASTRO DE NOVO CLIENTE (OFERECENDO DADOS ADICIONAIS)
+    // ============================================
+    if (dados.agendando && dados.passo === 'confirmar_cadastro') {
+        if (msg.includes('sim')) {
+            dados.passo = 'perguntar_dados_adicionais';
+            return { mensagem: `✨ Ótimo! Posso adicionar seu **e-mail** e **data de nascimento** ao cadastro? (sim/não)\n\nIsso ajuda a gente a te conhecer melhor e enviar lembretes especiais. 💕` };
+        } else if (msg.includes('não')) {
+            dados.agendando = false;
+            dados.passo = null;
+            return { mensagem: `💕 Sem problemas! Vamos recomeçar. Digite "agendar" quando quiser marcar um horário.` };
+        } else {
+            return { mensagem: `Por favor, responda com "sim" para confirmar o cadastro ou "não" para cancelar.` };
+        }
+    }
+
+    // ============================================
+    // PERGUNTAR SE QUER DADOS ADICIONAIS
+    // ============================================
+    if (dados.agendando && dados.passo === 'perguntar_dados_adicionais') {
+        if (msg.includes('sim')) {
+            dados.passo = 'coletar_email';
+            return { mensagem: `📧 Qual o seu **e-mail**? (ex: nome@email.com)\n\nSe não quiser informar, digite "pular"` };
+        } else if (msg.includes('não')) {
+            // Cadastrar sem dados adicionais
+            const cliente = await sistema.criarCliente(dados.nome, dados.telefone_cliente, null, null);
             if (cliente && cliente.id) {
                 dados.cliente_id = cliente.id;
                 dados.passo = 'profissional';
                 const profissionais = await sistema.buscarProfissionais();
+                dados.profissionais = profissionais;
                 const lista = profissionais.map(p => `✨ *${p.nome}* - ${p.especialidade || 'Profissional'}`).join('\n');
-                return { mensagem: `🎉 *Cadastro realizado com sucesso!* 🎉\n\nSeja bem-vindo(a) ao ${SALAO.nome}, ${dados.nome.split(' ')[0]}!\n\n${lista}\n\nQual profissional você prefere?` };
+                return { mensagem: `🎉 Cadastro realizado com sucesso!\n\nAgora me diga:\n\n${lista}\n\nQual profissional você prefere?` };
             } else {
-                return { mensagem: `❌ Erro ao cadastrar. Por favor, tente novamente ou ligue para ${SALAO.telefone}.` };
+                return { mensagem: `❌ Erro ao cadastrar. Digite "agendar" para tentar novamente.` };
             }
-        } else if (msg.includes('cancelar')) {
-            dados.passo = 'telefone';
-            return { mensagem: `💕 Tudo bem, vamos recomeçar. Me informe seu telefone com DDD:` };
         } else {
-            return { mensagem: `📋 Digite *CONFIRMAR* para finalizar o cadastro ou *CANCELAR* para recomeçar.` };
+            return { mensagem: `Responda com "sim" para adicionar e-mail e data de nascimento, ou "não" para continuar sem esses dados.` };
+        }
+    }
+
+    // ============================================
+    // COLETAR E-MAIL
+    // ============================================
+    if (dados.agendando && dados.passo === 'coletar_email') {
+        if (msg.includes('pular')) {
+            dados.email_cliente = null;
+            dados.passo = 'coletar_data_nascimento';
+            return { mensagem: `📅 Tudo bem! E sua **data de nascimento**? (DD/MM/AAAA)\n\nDigite "pular" se não quiser informar.` };
+        }
+        
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (emailRegex.test(msg)) {
+            dados.email_cliente = msg.trim();
+            dados.passo = 'coletar_data_nascimento';
+            return { mensagem: `📅 Agora, qual sua **data de nascimento**? (DD/MM/AAAA)\n\nDigite "pular" se não quiser informar.` };
+        } else {
+            return { mensagem: `📧 E-mail inválido. Digite um e-mail válido (ex: nome@email.com) ou "pular" para ignorar.` };
+        }
+    }
+
+    // ============================================
+    // COLETAR DATA DE NASCIMENTO
+    // ============================================
+    if (dados.agendando && dados.passo === 'coletar_data_nascimento') {
+        let dataNasc = null;
+        
+        if (!msg.includes('pular')) {
+            const match = msg.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            if (match) {
+                const dia = match[1].padStart(2, '0');
+                const mes = match[2].padStart(2, '0');
+                const ano = match[3];
+                dataNasc = `${ano}-${mes}-${dia}`;
+                
+                const dataObj = new Date(dataNasc);
+                if (isNaN(dataObj.getTime()) || dataObj > new Date()) {
+                    return { mensagem: `📅 Data inválida. Use o formato DD/MM/AAAA (ex: 15/05/1990) ou digite "pular".` };
+                }
+            } else {
+                return { mensagem: `📅 Formato inválido. Use DD/MM/AAAA (ex: 15/05/1990) ou digite "pular".` };
+            }
+        }
+        
+        const cliente = await sistema.criarCliente(dados.nome, dados.telefone_cliente, dados.email_cliente, dataNasc);
+        
+        if (cliente && cliente.id) {
+            dados.cliente_id = cliente.id;
+            dados.passo = 'profissional';
+            const profissionais = await sistema.buscarProfissionais();
+            dados.profissionais = profissionais;
+            const lista = profissionais.map(p => `✨ *${p.nome}* - ${p.especialidade || 'Profissional'}`).join('\n');
+            
+            let msgExtra = '';
+            if (dados.email_cliente) msgExtra += `\n📧 E-mail: ${dados.email_cliente}`;
+            if (dataNasc) msgExtra += `\n🎂 Data de nascimento: ${msg}`;
+            
+            return { mensagem: `🎉 Cadastro completo! ${msgExtra}\n\nSeja bem-vindo(a), ${dados.nome.split(' ')[0]}!\n\nAgora me diga:\n\n${lista}\n\nQual profissional você prefere?` };
+        } else {
+            return { mensagem: `❌ Desculpe, tive um problema ao cadastrar. Digite "agendar" para recomeçar.` };
         }
     }
     
-    if (dados.passo === 'profissional') {
-        const profissionais = await sistema.buscarProfissionais();
-        const profissional = profissionais.find(p => 
+    // ============================================
+    // ESCOLHER PROFISSIONAL
+    // ============================================
+    if (dados.passo === 'profissional' && !dados.profissional_id && dados.profissionais) {
+        const profissional = dados.profissionais.find(p => 
             p.nome.toLowerCase().includes(msg) || msg.includes(p.nome.toLowerCase())
         );
         
@@ -554,13 +685,33 @@ async function processarMensagem(contato, mensagemAtual) {
             dados.profissional_id = profissional.id;
             dados.profissional_nome = profissional.nome;
             dados.passo = 'data';
-            return { mensagem: `✨ Ótimo! Agora me informe a *data* (ex: 10/04 ou "hoje"/"amanhã"):` };
+            
+            const agenda = await sistema.buscarAgendaProfissional(dados.profissional_id);
+            
+            if (agenda && agenda.dias_disponiveis && agenda.dias_disponiveis.length > 0) {
+                dados.agenda_profissional = agenda.dias_disponiveis;
+                
+                const diasMsg = agenda.dias_disponiveis.slice(0, 10).map(d => {
+                    const { dataFormatada, diaSemana } = formatarDataBrasil(d.data);
+                    return `📅 *${dataFormatada}* (${diaSemana}) - ${d.horarios_disponiveis.length} horários`;
+                }).join('\n');
+                
+                return { mensagem: `✨ Ótima escolha! ${profissional.nome} é realmente incrível! 👏\n\n📆 *Dias disponíveis:*\n${diasMsg}\n\nQual dia fica melhor para você? (ex: 07/04)` };
+            }
+            
+            dados.agendando = false;
+            dados.passo = null;
+            return { mensagem: `💔 Que pena! ${profissional.nome} está sem horários disponíveis no momento. Quer tentar outro profissional? Digite "agendar" para recomeçar 🥺` };
         }
-        const lista = profissionais.map(p => `✨ ${p.nome}`).join('\n');
-        return { mensagem: `Profissionais disponíveis:\n${lista}\n\nQual você prefere?` };
+        
+        const lista = dados.profissionais.map(p => `✨ ${p.nome}`).join('\n');
+        return { mensagem: `💭 Não consegui identificar esse profissional. Os que temos são:\n\n${lista}\n\nQual deles você prefere?` };
     }
     
-    if (dados.passo === 'data') {
+    // ============================================
+    // ESCOLHER DIA
+    // ============================================
+    if (dados.passo === 'data' && !dados.data && dados.agenda_profissional) {
         let dataEncontrada = null;
         
         if (msg.includes('hoje')) {
@@ -581,49 +732,113 @@ async function processarMensagem(contato, mensagemAtual) {
         }
         
         if (dataEncontrada) {
-            dados.data = dataEncontrada;
-            dados.passo = 'horario';
-            return { mensagem: `📅 Perfeito! Agora me informe o *horário* (ex: 14:00 ou 14):` };
+            const agendaAtualizada = await sistema.buscarAgendaProfissional(dados.profissional_id, dataEncontrada);
+            const diaAgenda = agendaAtualizada?.dias_disponiveis?.find(d => d.data === dataEncontrada);
+            
+            if (diaAgenda && diaAgenda.horarios_disponiveis.length > 0) {
+                dados.data = dataEncontrada;
+                dados.horarios_disponiveis = diaAgenda.horarios_disponiveis;
+                dados.passo = 'horario';
+                const { dataFormatada, diaSemana } = formatarDataBrasil(dataEncontrada);
+                
+                return { mensagem: `🎉 Perfeito! Dia *${dataFormatada}* (${diaSemana}) temos os seguintes horários:\n\n⏰ ${diaAgenda.horarios_disponiveis.join(' • ')}\n\nQual horário você prefere? (Digite apenas a hora, ex: 14)` };
+            }
+            
+            return { mensagem: `💔 Infelizmente não temos mais horários disponíveis neste dia. Que tal escolher outro?\n\n${dados.agenda_profissional.slice(0, 7).map(d => {
+                const { dataFormatada } = formatarDataBrasil(d.data);
+                return `📅 ${dataFormatada}`;
+            }).join('\n')}` };
         }
-        return { mensagem: `📅 Data inválida. Digite (ex: 10/04) ou "hoje"/"amanhã":` };
+        
+        const diasMsg = dados.agenda_profissional.slice(0, 7).map(d => {
+            const { dataFormatada, diaSemana } = formatarDataBrasil(d.data);
+            return `📅 *${dataFormatada}* (${diaSemana})`;
+        }).join('\n');
+        
+        return { mensagem: `📆 *Dias disponíveis para agendamento:*\n\n${diasMsg}\n\nQual dia você prefere? (ex: 07/04)` };
     }
     
-    if (dados.passo === 'horario') {
+    // ============================================
+    // ESCOLHER HORÁRIO
+    // ============================================
+    if (dados.passo === 'horario' && !dados.horario && dados.horarios_disponiveis) {
         const match = msg.match(/(\d{1,2})/);
         if (match) {
-            const hora = match[1].padStart(2, '0');
-            const horario = `${hora}:00`;
-            dados.horario = horario;
-            dados.passo = 'servico';
+            const hora = parseInt(match[1]);
+            const horario = `${hora.toString().padStart(2,'0')}:00`;
             
-            const servicos = await sistema.buscarServicos();
-            const lista = servicos.slice(0, 30).map(s => `💇 ${s.nome} - R$ ${parseFloat(s.preco).toFixed(2)}`).join('\n');
-            return { mensagem: `⏰ Horário ${horario} anotado!\n\n📋 *SERVIÇOS DISPONÍVEIS:*\n${lista}\n\nQual serviço você quer?` };
+            if (dados.horarios_disponiveis.includes(horario)) {
+                const disponivel = await sistema.verificarDisponibilidade(dados.profissional_id, dados.data, horario);
+                
+                if (disponivel) {
+                    dados.horario = horario;
+                    dados.passo = 'servico';
+                    dados.paginaServicos = 1;
+                    
+                    const servicos = await sistema.buscarServicos();
+                    dados.servicos = servicos;
+                    
+                    const resultado = await mostrarMaisServicos(dados, 1);
+                    return { mensagem: `🎉 Horário *${horario}* reservado com sucesso!\n\nAgora me conta: qual serviço você gostaria de fazer?\n\n${resultado.mensagem}` };
+                } else {
+                    const horariosRestantes = dados.horarios_disponiveis.filter(h => h !== horario);
+                    dados.horarios_disponiveis = horariosRestantes;
+                    
+                    if (horariosRestantes.length === 0) {
+                        dados.passo = 'data';
+                        return { mensagem: `💔 Infelizmente o horário ${horario} acabou de ser ocupado e não temos mais horários neste dia. Que tal escolher outra data?` };
+                    }
+                    
+                    return { mensagem: `💔 Ops! O horário ${horario} acabou de ser ocupado. Ainda temos esses horários disponíveis:\n\n⏰ ${horariosRestantes.join(' • ')}\n\nQual você prefere agora?` };
+                }
+            }
+            
+            return { mensagem: `⏰ Horário inválido. Os horários disponíveis são: ${dados.horarios_disponiveis.join(' • ')}\n\nDigite apenas a hora (ex: 14)` };
         }
-        return { mensagem: `⏰ Horário inválido. Digite (ex: 14 ou 14:00):` };
+        
+        return { mensagem: `⏰ Me informe o horário desejado. Exemplo: 14\n\nHorários disponíveis: ${dados.horarios_disponiveis.join(' • ')}` };
     }
     
-    if (dados.passo === 'servico') {
-        const servicos = await sistema.buscarServicos();
-        const servico = servicos.find(s => 
-            s.nome.toLowerCase().includes(msg) || msg.includes(s.nome.toLowerCase())
-        );
+    // ============================================
+    // ESCOLHER SERVIÇO
+    // ============================================
+    if (dados.passo === 'servico' && !dados.servico_id && dados.servicos) {
+        if (msg.includes('próximo') || msg.includes('proximos') || msg.includes('mais serviços') || msg === 'proximo') {
+            const paginaAtual = dados.paginaServicos || 1;
+            const resultado = await mostrarMaisServicos(dados, paginaAtual + 1);
+            dados.paginaServicos = resultado.paginaAtual;
+            return { mensagem: resultado.mensagem };
+        }
+        
+        if (msg.includes('voltar') || msg.includes('anterior')) {
+            const paginaAtual = dados.paginaServicos || 1;
+            const resultado = await mostrarMaisServicos(dados, paginaAtual - 1);
+            dados.paginaServicos = resultado.paginaAtual;
+            return { mensagem: resultado.mensagem };
+        }
+        
+        const servico = buscarServicoPorNome(dados.servicos, mensagemAtual);
         
         if (servico) {
+            dados.servico_id = servico.id;
+            dados.servico_nome = servico.nome;
+            dados.servico_preco = servico.preco;
+            
             const disponivel = await sistema.verificarDisponibilidade(
-                dados.profissional_id, dados.data, dados.horario
+                dados.profissional_id, 
+                dados.data, 
+                dados.horario
             );
             
             if (!disponivel) {
-                dados.passo = 'horario';
-                return { mensagem: `💔 Horário ${dados.horario} não está mais disponível. Que tal outro horário?` };
+                return { mensagem: `💔 Infelizmente o horário ${dados.horario} do dia ${dados.data} acabou de ser ocupado. Que tal começarmos de novo? Digite "agendar" 🥺` };
             }
             
             const resultado = await sistema.criarAgendamento({
                 nome_cliente: dados.nome,
-                telefone_cliente: dados.telefone,
+                telefone_cliente: contato,
                 cliente_id: dados.cliente_id,
-                servico_id: servico.id,
+                servico_id: dados.servico_id,
                 data: dados.data,
                 horario: dados.horario,
                 profissional_id: dados.profissional_id
@@ -631,306 +846,103 @@ async function processarMensagem(contato, mensagemAtual) {
             
             if (resultado && resultado.id) {
                 const { dataFormatada, diaSemana } = formatarDataBrasil(dados.data);
-                const mensagemConfirmacao = `🎉 *AGENDAMENTO CONFIRMADO!* 🎉\n\n` +
+                const nomeCliente = dados.nome.split(' ')[0];
+                const mensagem = `🎉 *AGENDAMENTO CONFIRMADO!* 🎉\n\n` +
                     `✨ *Profissional:* ${dados.profissional_nome}\n` +
                     `📅 *Data:* ${dataFormatada} (${diaSemana})\n` +
                     `⏰ *Horário:* ${dados.horario}\n` +
-                    `💇 *Serviço:* ${servico.nome}\n` +
-                    `💰 *Valor:* R$ ${parseFloat(servico.preco).toFixed(2)}\n\n` +
+                    `💇 *Serviço:* ${dados.servico_nome}\n` +
+                    `💰 *Valor:* R$ ${parseFloat(dados.servico_preco).toFixed(2)}\n\n` +
                     `📍 *Local:* ${SALAO.endereco}\n` +
                     `📞 *Telefone:* ${SALAO.telefone}\n\n` +
-                    `💕 Qualquer dúvida é só chamar!`;
+                    `${gerarMensagemDespedida(nomeCliente)}\n\n` +
+                    `📋 Para consultar seus agendamentos: "ver meus agendamentos"\n` +
+                    `❌ Para cancelar: "cancelar"`;
                 
-                Object.keys(dados).forEach(key => {
-                    if (!['historico', 'nome', 'cliente_id', 'telefone'].includes(key)) {
-                        delete dados[key];
-                    }
-                });
+                conversa.ultimoAgendamento = {
+                    timestamp: Date.now(),
+                    nome: dados.nome,
+                    data: dataFormatada,
+                    horario: dados.horario,
+                    servico: dados.servico_nome,
+                    profissional: dados.profissional_nome
+                };
+                
+                Object.keys(dados).forEach(key => delete dados[key]);
+                dados.agendando = false;
                 dados.passo = null;
                 
-                return { mensagem: mensagemConfirmacao };
+                return { mensagem };
             }
             
-            return { mensagem: `❌ Erro ao criar agendamento. Ligue para ${SALAO.telefone}` };
+            return { mensagem: `❌ Desculpe, tive um probleminha técnico ao agendar. Poderia tentar novamente ou nos ligar no ${SALAO.telefone}? 💕` };
         }
         
-        const servicosLista = servicos.slice(0, 20).map(s => `💇 ${s.nome}`).join('\n');
-        return { mensagem: `💭 Não encontrei "${mensagemAtual}".\n\nServiços disponíveis:\n${servicosLista}\n\nDigite o nome do serviço:` };
+        const paginaAtual = dados.paginaServicos || 1;
+        const resultado = await mostrarMaisServicos(dados, paginaAtual);
+        dados.paginaServicos = resultado.paginaAtual;
+        return { mensagem: `💭 Não encontrei "${mensagemAtual}" na nossa lista.\n\n${resultado.mensagem}` };
     }
     
     // ============================================
-    // COMANDOS RÁPIDOS
+    // RESPOSTA INTELIGENTE COM IA
     // ============================================
-    
-    if (msg === 'ajuda' || msg === 'help' || msg === '?') {
-        return { mensagem: `📋 *Comandos disponíveis:*\n\n• "agendar" - Marcar um horário\n• "ver meus agendamentos" - Consultar seus horários\n• "cancelar" - Desmarcar um agendamento\n• "serviços" - Ver lista de serviços\n• "endereço" - Onde ficamos\n• "horário" - Horário de funcionamento\n\nComo posso ajudar? 💕` };
-    }
-    
-    if (msg.includes('endereço') || msg.includes('localização') || msg.includes('onde fica')) {
-        return { mensagem: `📍 *${SALAO.nome}*\n\n${SALAO.endereco}\n\n📞 ${SALAO.telefone}\n\nTe esperamos por lá! 🥰` };
-    }
-    
-    if (msg.includes('horário') || msg.includes('funcionamento') || msg.includes('abre')) {
-        return { mensagem: `🕐 *Horário de funcionamento:*\n\nSegunda a Sexta: 9h às 19h\nSábado: 9h às 17h\nDomingo: Fechado` };
-    }
-    
-    // LISTAR SERVIÇOS
-    if (msg.includes('próximos serviços') || msg.includes('proximos servicos') || msg === 'proximos') {
-        const paginaAtual = dados.paginaServicos || 1;
-        const resultado = await listarServicosPorCategoria(contato, paginaAtual + 1);
-        dados.paginaServicos = resultado.paginaAtual;
-        return { mensagem: resultado.mensagem };
-    }
-    
-    if (msg.includes('voltar serviços') || msg.includes('voltar servicos') || msg === 'voltar') {
-        const paginaAtual = dados.paginaServicos || 1;
-        const resultado = await listarServicosPorCategoria(contato, paginaAtual - 1);
-        dados.paginaServicos = resultado.paginaAtual;
-        return { mensagem: resultado.mensagem };
-    }
-    
-    if (msg === 'serviços' || msg === 'servicos' || msg.includes('lista de serviços') || msg.includes('quais serviços')) {
-        const resultado = await listarServicosPorCategoria(contato, 1);
-        dados.paginaServicos = 1;
-        return { mensagem: resultado.mensagem };
-    }
-    
-    const palavrasComando = ['agendar', 'marcar', 'cancelar', 'ver', 'ajuda', 'endereço', 'horário', 'serviços', 'servicos'];
-    const isComando = palavrasComando.some(c => msg.includes(c));
-    
-    if (!isComando && mensagemAtual.length > 3 && !dados.passo) {
-        const servicoDetalhado = await buscarServicoDetalhado(mensagemAtual);
-        if (servicoDetalhado) {
-            return { mensagem: `${servicoDetalhado}\n\n💕 Gostaria de agendar esse serviço? Digite "agendar"` };
-        }
-    }
-    
-    // VER AGENDAMENTOS
-    if (msg.includes('ver meus agendamentos') || msg.includes('meus agendamentos')) {
-        if (!dados.cliente_id && !dados.telefone) {
-            return { mensagem: `💕 Para ver seus agendamentos, me informe seu telefone:` };
-        }
-        
-        let cliente = null;
-        if (dados.cliente_id) {
-            cliente = { id: dados.cliente_id };
-        } else if (dados.telefone) {
-            cliente = await sistema.buscarClientePorTelefone(dados.telefone);
-        }
-        
-        if (!cliente) {
-            return { mensagem: `💕 Não encontrei seus agendamentos. Digite "agendar" para marcar um horário.` };
-        }
-        
-        const agendamentos = await sistema.buscarAgendamentosCliente(cliente.id);
-        const agora = new Date();
-        const futuros = agendamentos.filter(a => new Date(a.data_hora) > agora && a.status !== 'cancelado');
-        
-        if (futuros.length === 0) {
-            return { mensagem: `✨ Você não tem agendamentos futuros. Quer marcar um? Digite "agendar" 🥰` };
-        }
-        
-        let mensagem = `📋 *SEUS AGENDAMENTOS*\n\n`;
-        for (const ag of futuros) {
-            const dataHora = new Date(ag.data_hora);
-            mensagem += `📅 ${dataHora.toLocaleDateString('pt-BR')} às ${dataHora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}\n`;
-            mensagem += `👤 ${ag.profissional_nome}\n💇 ${ag.servico_nome}\n➖➖➖➖➖\n`;
-        }
-        return { mensagem };
-    }
-    
-    // CANCELAR AGENDAMENTO
-    if (msg.includes('cancelar')) {
-        if (!dados.cliente_id && !dados.telefone) {
-            dados.aguardandoNomeCancelamento = true;
-            return { mensagem: `💕 Para cancelar, me informe seu nome completo primeiro.` };
-        }
-        
-        let cliente = null;
-        if (dados.cliente_id) {
-            cliente = { id: dados.cliente_id };
-        } else if (dados.telefone) {
-            cliente = await sistema.buscarClientePorTelefone(dados.telefone);
-        }
-        
-        if (!cliente) {
-            return { mensagem: `💕 Não encontrei seus agendamentos. Poderia me informar seu nome completo?` };
-        }
-        
-        const agendamentos = await sistema.buscarAgendamentosCliente(cliente.id);
-        const agora = new Date();
-        const futuros = agendamentos.filter(a => new Date(a.data_hora) > agora && a.status !== 'cancelado');
-        
-        if (futuros.length === 0) {
-            return { mensagem: `✨ Você não tem agendamentos futuros para cancelar.` };
-        }
-        
-        if (futuros.length === 1) {
-            await sistema.cancelarAgendamento(futuros[0].id);
-            return { mensagem: `✅ Agendamento cancelado com sucesso! Se quiser remarcar, digite "agendar" 💖` };
-        }
-        
-        const lista = futuros.map((ag, i) => {
-            const data = new Date(ag.data_hora).toLocaleDateString('pt-BR');
-            const hora = new Date(ag.data_hora).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-            return `${i+1} - ${data} às ${hora} - ${ag.servico_nome}`;
-        }).join('\n');
-        
-        dados.aguardandoCancelamento = true;
-        dados.agendamentosParaCancelar = futuros;
-        return { mensagem: `📋 Seus agendamentos:\n\n${lista}\n\nQual deseja cancelar? (Digite o número)` };
-    }
-    
-    if (dados.aguardandoCancelamento && dados.agendamentosParaCancelar) {
-        const num = parseInt(msg);
-        if (!isNaN(num) && num >= 1 && num <= dados.agendamentosParaCancelar.length) {
-            const ag = dados.agendamentosParaCancelar[num - 1];
-            await sistema.cancelarAgendamento(ag.id);
-            delete dados.aguardandoCancelamento;
-            delete dados.agendamentosParaCancelar;
-            return { mensagem: `✅ Agendamento cancelado com sucesso!` };
-        }
-        return { mensagem: `💕 Digite o número do agendamento que deseja cancelar.` };
-    }
-    
-    if (dados.aguardandoNomeCancelamento) {
-        if (mensagemAtual.length >= 3) {
-            dados.nome = mensagemAtual.trim();
-            delete dados.aguardandoNomeCancelamento;
-            const cliente = await sistema.buscarClientePorNome(dados.nome);
-            if (cliente) dados.cliente_id = cliente.id;
-            return { mensagem: `✅ Vou verificar seus agendamentos... Agora diga "cancelar" novamente.` };
-        }
-        return { mensagem: `💕 Me informe seu nome completo.` };
-    }
-    
-    // INICIAR AGENDAMENTO
-    if (msg.includes('agendar') || msg.includes('marcar') || msg.includes('quero um horário')) {
-        dados.passo = 'telefone';
-        return { mensagem: `📞 Vamos agendar! Me informe seu telefone com DDD (ex: 61999999999):` };
-    }
-    
-    // IA PARA RESPOSTAS INTELIGENTES
-    const [profissionais, servicos] = await Promise.all([
-        sistema.buscarProfissionais(),
-        sistema.buscarServicos()
+    const respostaIA = await deepseek.gerarResposta([
+        {
+            role: 'system',
+            content: `Você é a Amanda, atendente do salão ${SALAO.nome}. Seja simpática, acolhedora e profissional. Use emojis com moderação. Chame o cliente pelo nome se souber: ${dados.nome || 'cliente'}. Responda de forma natural e humana. Sempre em português do Brasil.`
+        },
+        { role: 'user', content: mensagemAtual }
     ]);
     
-    const servicosLista = servicos.slice(0, 30).map(s => `- ${s.nome}: R$ ${parseFloat(s.preco).toFixed(2)}`).join('\n');
-    const profissionaisLista = profissionais.map(p => `- ${p.nome} (${p.especialidade || 'Profissional'})`).join('\n');
-    
-    const systemPrompt = `Você é a Amanda, atendente virtual do salão "${SALAO.nome}".
-
-SERVIÇOS DISPONÍVEIS:
-${servicosLista || 'Nenhum serviço cadastrado'}
-
-PROFISSIONAIS:
-${profissionaisLista || 'Nenhum profissional cadastrado'}
-
-Cliente: ${dados.nome || 'visitante'}
-
-REGRAS:
-1. Seja simpática, acolhedora e profissional
-2. Se perguntarem sobre agendamento, diga: "Claro! Digite AGENDAR para começarmos"
-3. Se perguntarem sobre preços, consulte a lista de serviços acima
-4. Se perguntarem sobre profissionais, mostre a lista
-5. NUNCA invente informações que não estão nas listas
-6. Responda de forma natural e humana
-
-Pergunta do cliente: ${mensagemAtual}`;
-
-    try {
-        const respostaIA = await deepseek.gerarResposta([
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: mensagemAtual }
-        ]);
-        
-        if (respostaIA.sucesso && respostaIA.resposta) {
-            dados.historico.push({ role: 'assistant', content: respostaIA.resposta });
-            return { mensagem: respostaIA.resposta };
-        }
-        
-        return { mensagem: `✨ Posso ajudar com:\n• "agendar" - marcar horário\n• "serviços" - ver lista\n• "endereço" - onde ficamos\n\nComo posso te ajudar? 💕` };
-        
-    } catch (error) {
-        console.error('❌ Erro na IA:', error.message);
-        return { mensagem: `✨ Digite "agendar" para marcar um horário, ou "serviços" para ver a lista!` };
+    if (respostaIA.sucesso) {
+        return { mensagem: respostaIA.resposta };
     }
+    
+    // ============================================
+    // FALLBACK
+    // ============================================
+    const respostasFallback = [
+        `✨ Como posso te ajudar? Você pode agendar um horário, consultar seus agendamentos ou tirar dúvidas sobre nossos serviços! 💕`,
+        `🥰 Oi! Estou aqui para ajudar! Quer marcar um horário ou ver seus agendamentos?`,
+        `💖 Olá! Diga "agendar" para marcar um horário, ou "ajuda" para ver o que posso fazer por você!`
+    ];
+    
+    return { mensagem: respostasFallback[Math.floor(Math.random() * respostasFallback.length)] };
 }
 
 // ============================================
-// HANDLE MESSAGE (VERSÃO VENOM - HOSTINGER)
+// HANDLE MESSAGE
 // ============================================
 async function handleMessage(client, message) {
     try {
-        // Venom usa 'isStatus' para stories
-        if (message.isStatus === true) {
-            console.log('📸 Ignorando story/status');
-            return;
-        }
-        
-        // Ignorar mensagens do próprio bot
-        if (message.fromMe === true) return;
-        
-        // Ignorar mensagens de grupo (opcional)
-        if (message.isGroupMsg === true) {
-            console.log('👥 Ignorando mensagem de grupo');
-            return;
-        }
-        
         if (!message.body || message.body.trim() === '') return;
         
         const contato = message.from;
+        const nome = message.sender?.pushname || "Cliente";
         const texto = message.body;
         
-        // Limpar número do WhatsApp (Venom já retorna o número limpo)
-        const telefoneLimpo = contato.replace(/\D/g, '');
+        console.log(`\n📩 ${nome}: ${texto}`);
         
-        let conversa = conversas.get(contato);
-        if (!conversa) {
-            conversa = {
-                dados: {
-                    historico: [],
-                    nome: null,
-                    cliente_id: null,
-                    telefone: null,
-                    paginaServicos: 1,
-                    passo: null
-                },
-                ultimaAtualizacao: new Date(),
-                interacoes: 0
-            };
-            conversas.set(contato, conversa);
-        }
-        
-        // Se não tem cliente_id, tentar buscar
-        if (!conversa.dados.cliente_id && telefoneLimpo) {
-            const cliente = await sistema.buscarClientePorTelefone(telefoneLimpo);
-            if (cliente) {
-                conversa.dados.cliente_id = cliente.id;
-                conversa.dados.nome = cliente.nome;
-                console.log(`✅ Cliente encontrado: ${cliente.nome}`);
-            }
-        }
-        
-        console.log(`\n📨 [${contato}] ${texto}`);
-        
-        // Venom não tem startTyping/stopTyping, então removemos
+        await client.startTyping(contato).catch(() => {});
         
         const resultado = await processarMensagem(contato, texto);
         
         if (resultado && resultado.mensagem) {
             await new Promise(resolve => setTimeout(resolve, 500));
             await client.sendText(contato, resultado.mensagem);
-            console.log(`✅ Resposta enviada para ${contato}`);
+            console.log(`✅ Resposta enviada`);
         }
         
+        await client.stopTyping(contato).catch(() => {});
+        
     } catch (error) {
-        console.error('❌ Erro no handleMessage:', error.message);
+        console.error('❌ Erro:', error);
     }
 }
+
 // ============================================
-// LIMPEZA DE CONVERSAS
+// LIMPEZA DE CONVERSAS INATIVAS
 // ============================================
 setInterval(() => {
     const agora = new Date();
@@ -942,48 +954,41 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // ============================================
-// INICIALIZAÇÃO DO BOT (VENOM - SEM CHROME)
+// INICIALIZAÇÃO
 // ============================================
-async function iniciarBot() {
-    console.log('🚀 Iniciando Bot Inteligente...');
-    console.log(`🤖 DeepSeek: ${DEEPSEEK_API_KEY ? '✅ Configurado' : '❌ Não configurado'}`);
-    console.log(`💇 Salão: ${SALAO.nome}`);
+console.log('🚀 Iniciando Bot Inteligente...');
+console.log(`🤖 DeepSeek: ${DEEPSEEK_API_KEY ? '✅ Configurado' : '❌ Não configurado'}`);
+console.log(`💇 Salão: ${SALAO.nome}`);
 
-    await sistema.testarConexao().then(ok => {
-        if (ok) console.log('✅ API do sistema conectada!');
-        else console.log('⚠️ API offline - algumas funções podem não funcionar');
-    });
+sistema.testarConexao().then(ok => {
+    if (ok) console.log('✅ API do sistema conectada!');
+    else console.log('⚠️ API offline - algumas funções podem não funcionar');
+});
 
-    // 🔥 CONFIGURAÇÃO VENOM (NÃO PRECISA DE CHROME)
-    venom.create({
-        session: 'salao-bot',
-        headless: true,
-        debug: false,
-        logQR: true,
-        browserWS: '',
-        browserArgs: ['--no-sandbox'],
-        folderNameToken: 'tokens',
-        mkdirFolderToken: './tokens',
-        waVersion: '2.2410.1'
-    }).then((client) => {
-        console.log('✅ Bot conectado com sucesso!');
-        console.log('💬 Bot pronto para conversar!');
-        
-        client.onMessage(async (message) => {
-            if (message.isGroupMsg === false) {
-                await handleMessage(client, message);
-            }
-        });
-        
-        client.onStateChange((state) => {
-            console.log('📱 Estado da conexão:', state);
-            if (state === 'CONFLICT') client.useHere();
-        });
-        
-        console.log('📱 Aguardando QR Code... Escaneie com seu WhatsApp quando aparecer');
-    }).catch((error) => {
-        console.error('❌ Erro ao iniciar bot:', error);
-        console.log('🔄 Tentando novamente em 5 segundos...');
-        setTimeout(() => iniciarBot(), 5000);
+wppconnect.create({
+    session: 'salao-bot',
+    autoClose: false,
+    puppeteerOptions: {
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+    }
+}).then((client) => {
+    console.log('✅ Bot conectado com sucesso!');
+    console.log('📱 Escaneie o QR Code acima para conectar seu WhatsApp');
+    console.log('💬 Bot pronto para conversar!');
+    
+    client.onMessage(async (message) => {
+        await handleMessage(client, message);
     });
-}
+    
+    client.onStateChange((state) => {
+        console.log('📱 Estado da conexão:', state);
+        if (state === 'CONFLICT') client.useHere();
+    });
+    
+}).catch((error) => {
+    console.error('❌ Erro ao iniciar bot:', error);
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('❌ Erro não tratado:', error);
+});
