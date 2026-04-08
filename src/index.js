@@ -1,8 +1,9 @@
 // src/index.js - VERSÃO CORRIGIDA PARA HOSTINGER
 require('dotenv').config();
-const wppconnect = require('@wppconnect-team/wppconnect');
+const venom = require('venom-bot');  // ← Deve ser venom, não wppconnect
 const axios = require('axios');
 const express = require('express');
+
 
 // Aumentar timeout
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
