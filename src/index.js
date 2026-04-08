@@ -858,36 +858,63 @@ Pergunta do cliente: ${mensagemAtual}`;
 }
 
 // ============================================
-// HANDLE MESSAGE
+// HANDLE MESSAGE (VERSÃO VENOM - HOSTINGER)
 // ============================================
 async function handleMessage(client, message) {
     try {
-        if (message.from === 'status@broadcast') {
+        // Venom usa 'isStatus' para stories
+        if (message.isStatus === true) {
             console.log('📸 Ignorando story/status');
             return;
         }
         
-        if (message.fromMe) return;
+        // Ignorar mensagens do próprio bot
+        if (message.fromMe === true) return;
+        
+        // Ignorar mensagens de grupo (opcional)
+        if (message.isGroupMsg === true) {
+            console.log('👥 Ignorando mensagem de grupo');
+            return;
+        }
         
         if (!message.body || message.body.trim() === '') return;
         
         const contato = message.from;
         const texto = message.body;
         
-        const telefoneLimpo = contato.replace(/@c\.us/g, '').replace(/@lid/g, '').replace(/\D/g, '');
+        // Limpar número do WhatsApp (Venom já retorna o número limpo)
+        const telefoneLimpo = contato.replace(/\D/g, '');
         
         let conversa = conversas.get(contato);
-        if (!conversa || !conversa.dados.cliente_id) {
+        if (!conversa) {
+            conversa = {
+                dados: {
+                    historico: [],
+                    nome: null,
+                    cliente_id: null,
+                    telefone: null,
+                    paginaServicos: 1,
+                    passo: null
+                },
+                ultimaAtualizacao: new Date(),
+                interacoes: 0
+            };
+            conversas.set(contato, conversa);
+        }
+        
+        // Se não tem cliente_id, tentar buscar
+        if (!conversa.dados.cliente_id && telefoneLimpo) {
             const cliente = await sistema.buscarClientePorTelefone(telefoneLimpo);
-            if (cliente && conversa) {
+            if (cliente) {
                 conversa.dados.cliente_id = cliente.id;
                 conversa.dados.nome = cliente.nome;
+                console.log(`✅ Cliente encontrado: ${cliente.nome}`);
             }
         }
         
         console.log(`\n📨 [${contato}] ${texto}`);
         
-        await client.startTyping(contato).catch(() => {});
+        // Venom não tem startTyping/stopTyping, então removemos
         
         const resultado = await processarMensagem(contato, texto);
         
@@ -897,13 +924,10 @@ async function handleMessage(client, message) {
             console.log(`✅ Resposta enviada para ${contato}`);
         }
         
-        await client.stopTyping(contato).catch(() => {});
-        
     } catch (error) {
-        console.error('❌ Erro:', error.message);
+        console.error('❌ Erro no handleMessage:', error.message);
     }
 }
-
 // ============================================
 // LIMPEZA DE CONVERSAS
 // ============================================
@@ -916,8 +940,10 @@ setInterval(() => {
     }
 }, 10 * 60 * 1000);
 
+const venom = require('venom-bot');
+
 // ============================================
-// INICIALIZAÇÃO DO BOT (VERSÃO DOCKER/RAILWAY)
+// INICIALIZAÇÃO DO BOT (VENOM - SEM CHROME)
 // ============================================
 async function iniciarBot() {
     console.log('🚀 Iniciando Bot Inteligente...');
@@ -929,91 +955,37 @@ async function iniciarBot() {
         else console.log('⚠️ API offline - algumas funções podem não funcionar');
     });
 
-    // 🔥 CONFIGURAÇÃO PARA DOCKER/RAILWAY COM CHROMIUM DO SISTEMA
-    const wppconnectOptions = {
+    // 🔥 CONFIGURAÇÃO VENOM (NÃO PRECISA DE CHROME)
+    venom.create({
         session: 'salao-bot',
-        autoClose: false,
         headless: true,
-        qrTimeout: 0,
-        devtools: false,
-        disableSpins: true,
-        disableWelcome: true,
-        updatesLog: false,
-        autoRefresh: true,
-        disableStory: true,
-        disableAutoRead: true,
-        markOnline: false,
-        browserArgs: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--disable-gpu',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-features=TranslateUI'
-        ],
-        // 🔥 CRÍTICO: Forçar uso do Chromium instalado no sistema
-        puppeteerOptions: {
-            executablePath: '/usr/bin/chromium',
-            args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-accelerated-2d-canvas',
-                '--disable-gpu'
-            ]
-        }
-    };
-
-    wppconnect.create(wppconnectOptions)
-        .then((client) => {
-            console.log('✅ Bot conectado com sucesso!');
-            console.log('💬 Bot pronto para conversar!');
-            
-            client.onMessage(async (message) => {
+        useChrome: false,
+        debug: false,
+        logQR: true,
+        browserWS: '',
+        browserArgs: ['--no-sandbox'],
+        folderNameToken: 'tokens',
+        mkdirFolderToken: './tokens',
+        waVersion: '2.2410.1'
+    }).then((client) => {
+        console.log('✅ Bot conectado com sucesso!');
+        console.log('💬 Bot pronto para conversar!');
+        
+        client.onMessage(async (message) => {
+            if (message.isGroupMsg === false) {
                 await handleMessage(client, message);
-            });
-            
-            client.onStateChange((state) => {
-                console.log('📱 Estado da conexão:', state);
-                if (state === 'CONFLICT') client.useHere();
-                if (state === 'UNPAIRED' || state === 'UNLAUNCHED') {
-                    console.log('⚠️ Sessão desconectada, reiniciando em 5 segundos...');
-                    setTimeout(() => iniciarBot(), 5000);
-                }
-            });
-            
-            if (client.onLoadingScreen) {
-                client.onLoadingScreen((percent, message) => {
-                    console.log(`🔄 Carregando WhatsApp: ${percent}% - ${message}`);
-                });
             }
-            
-            if (client.onReady) {
-                client.onReady(() => {
-                    console.log('✅ Cliente do WhatsApp pronto e conectado!');
-                });
-            }
-            
-            console.log('📱 Aguardando QR Code... Escaneie com seu WhatsApp quando aparecer');
-        })
-        .catch((error) => {
-            console.error('❌ Erro ao iniciar bot:', error);
-            console.log('🔄 Tentando novamente em 5 segundos...');
-            setTimeout(() => iniciarBot(), 5000);
         });
+        
+        client.onStateChange((state) => {
+            console.log('📱 Estado da conexão:', state);
+            if (state === 'CONFLICT') client.useHere();
+        });
+        
+        console.log('📱 Aguardando QR Code... Escaneie com seu WhatsApp quando aparecer');
+    }).catch((error) => {
+        console.error('❌ Erro ao iniciar bot:', error);
+        console.log('🔄 Tentando novamente em 5 segundos...');
+        setTimeout(() => iniciarBot(), 5000);
+    });
 }
-
-// Iniciar o bot
-iniciarBot();
-
-process.on('uncaughtException', (error) => {
-    console.error('❌ Erro não tratado:', error);
-    setTimeout(() => iniciarBot(), 5000);
-});
-
-process.on('unhandledRejection', (error) => {
-    console.error('❌ Promise rejeitada:', error);
-});
