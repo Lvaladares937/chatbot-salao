@@ -1,0 +1,13 @@
+# Dependˆncias 
+node_modules/ 
+package-lock.json 
+# Tokens 
+tokens/ 
+.wwebjs_auth/ 
+.wwebjs_cache/ 
+# Ambiente 
+.env 
+.env.local 
+# Logs 
+logs/ 
+*.log 
