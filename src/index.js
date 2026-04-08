@@ -917,7 +917,7 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // ============================================
-// INICIALIZAÇÃO DO BOT (VERSÃO RAILWAY)
+// INICIALIZAÇÃO DO BOT (VERSÃO DOCKER/RAILWAY)
 // ============================================
 async function iniciarBot() {
     console.log('🚀 Iniciando Bot Inteligente...');
@@ -929,7 +929,7 @@ async function iniciarBot() {
         else console.log('⚠️ API offline - algumas funções podem não funcionar');
     });
 
-    // 🔥 CONFIGURAÇÃO OTIMIZADA PARA RAILWAY
+    // 🔥 CONFIGURAÇÃO PARA DOCKER/RAILWAY COM CHROMIUM DO SISTEMA
     const wppconnectOptions = {
         session: 'salao-bot',
         autoClose: false,
@@ -953,7 +953,18 @@ async function iniciarBot() {
             '--disable-backgrounding-occluded-windows',
             '--disable-renderer-backgrounding',
             '--disable-features=TranslateUI'
-        ]
+        ],
+        // 🔥 CRÍTICO: Forçar uso do Chromium instalado no sistema
+        puppeteerOptions: {
+            executablePath: '/usr/bin/chromium',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu'
+            ]
+        }
     };
 
     wppconnect.create(wppconnectOptions)
@@ -987,7 +998,6 @@ async function iniciarBot() {
             }
             
             console.log('📱 Aguardando QR Code... Escaneie com seu WhatsApp quando aparecer');
-            console.log('🔗 Acesse: https://railway.app para ver o QR Code nos logs');
         })
         .catch((error) => {
             console.error('❌ Erro ao iniciar bot:', error);
