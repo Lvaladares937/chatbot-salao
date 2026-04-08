@@ -3,7 +3,6 @@ require('dotenv').config();
 const wppconnect = require('@wppconnect-team/wppconnect');
 const axios = require('axios');
 const express = require('express');
-const chromium = require('chrome-aws-lambda');
 
 // Aumentar timeout
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -918,7 +917,7 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // ============================================
-// INICIALIZAÇÃO DO BOT (VERSÃO HOSTINGER)
+// INICIALIZAÇÃO DO BOT (VERSÃO RAILWAY)
 // ============================================
 async function iniciarBot() {
     console.log('🚀 Iniciando Bot Inteligente...');
@@ -930,6 +929,7 @@ async function iniciarBot() {
         else console.log('⚠️ API offline - algumas funções podem não funcionar');
     });
 
+    // 🔥 CONFIGURAÇÃO OTIMIZADA PARA RAILWAY
     const wppconnectOptions = {
         session: 'salao-bot',
         autoClose: false,
@@ -943,13 +943,17 @@ async function iniciarBot() {
         disableStory: true,
         disableAutoRead: true,
         markOnline: false,
-        browserArgs: chromium.args,
-        puppeteerOptions: {
-            executablePath: await chromium.executablePath,
-            args: chromium.args,
-            headless: chromium.headless,
-            protocolTimeout: 180000
-        }
+        browserArgs: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--disable-gpu',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-features=TranslateUI'
+        ]
     };
 
     wppconnect.create(wppconnectOptions)
@@ -983,7 +987,7 @@ async function iniciarBot() {
             }
             
             console.log('📱 Aguardando QR Code... Escaneie com seu WhatsApp quando aparecer');
-            
+            console.log('🔗 Acesse: https://railway.app para ver o QR Code nos logs');
         })
         .catch((error) => {
             console.error('❌ Erro ao iniciar bot:', error);
