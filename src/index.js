@@ -553,10 +553,10 @@ async function processarMensagem(contato, mensagemAtual) {
                 return { mensagem: `${gerarMensagemBoasVindas(dados.nome.split(' ')[0])}\n\nQue bom! Já encontrei seu cadastro. Agora me diga:\n\n${lista}\n\nQual profissional você prefere?` };
             } else {
                 dados.passo = 'solicitar_nome_apos_telefone';
-                return { mensagem: `🔍 Não encontrei nenhum cliente com o telefone ${telefoneDigitado}.\n\nQual é o seu **nome completo** para eu verificar novamente?` };
+                return { mensagem: `🔍 Não encontrei nenhum cliente com o telefone ${telefoneDigitado}.\n\nQual é o seu **nome completo** (apenas letras)? Para eu verificar novamente.` };
             }
         } else {
-            return { mensagem: `📱 Oops! O número deve ter DDD e 8 ou 9 dígitos. Exemplo: 61999999999\n\nPor favor, digite apenas os números.` };
+            return { mensagem: `📱 Oops! O número deve ter DDD e 8 ou 9 dígitos. Exemplo: 61999999999\n\nPor favor, digite apenas os números do seu WhatsApp.` };
         }
     }
 
