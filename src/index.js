@@ -396,13 +396,42 @@ async function processarMensagem(contato, mensagemAtual) {
     }
 
     // ============================================
-    // VER AGENDAMENTOS
+    // VER AGENDAMENTOS (com estado para aguardar nome)
     // ============================================
     if (msg.includes('ver meus agendamentos') || msg.includes('meus agendamentos') || msg.includes('consultar agendamento')) {
-        const resultado = await verAgendamentos(contato, dados);
-        return { mensagem: resultado.mensagem };
+        // Tenta buscar cliente pelo telefone ou nome já existente na conversa
+        let cliente = dados.cliente_id ? { id: dados.cliente_id } : await sistema.buscarCliente(contato, dados.nome);
+        
+        if (cliente) {
+            dados.cliente_id = cliente.id;
+            dados.nome = cliente.nome;
+            const resultado = await verAgendamentos(contato, dados);
+            return { mensagem: resultado.mensagem };
+        } else {
+            // Não encontrou, entra em modo de espera pelo nome
+            dados.aguardandoNomeParaAgendamentos = true;
+            return { mensagem: `💕 Para ver seus agendamentos, poderia me informar seu nome completo? Assim consigo encontrar certinho!` };
+        }
     }
 
+    // ============================================
+    // RECEBER NOME PARA MOSTRAR AGENDAMENTOS
+    // ============================================
+    if (dados.aguardandoNomeParaAgendamentos && mensagemAtual.length >= 3) {
+        const nomeDigitado = mensagemAtual.trim();
+        const cliente = await sistema.buscarCliente(null, nomeDigitado);
+        
+        if (cliente) {
+            dados.cliente_id = cliente.id;
+            dados.nome = cliente.nome;
+            dados.aguardandoNomeParaAgendamentos = false;
+            const resultado = await verAgendamentos(contato, dados);
+            return { mensagem: resultado.mensagem };
+        } else {
+            dados.aguardandoNomeParaAgendamentos = false;
+            return { mensagem: `💔 Não encontrei nenhum cliente com o nome "${nomeDigitado}". Você já agendou algo conosco? Digite "agendar" para marcar um horário.` };
+        }
+    }
     // ============================================
     // CANCELAMENTO
     // ============================================
