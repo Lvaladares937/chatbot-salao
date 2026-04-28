@@ -1,13 +1,39 @@
-# Depend�ncias 
-node_modules/ 
-package-lock.json 
-# Tokens 
-tokens/ 
-.wwebjs_auth/ 
-.wwebjs_cache/ 
-# Ambiente 
-.env 
-.env.local 
-# Logs 
-logs/ 
-*.log 
+# Dependências
+node_modules/
+package-lock.json
+
+# Tokens de sessão do WhatsApp
+tokens/
+.wwebjs_auth/
+.wwebjs_cache/
+.session-*
+
+# Ambiente
+.env
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+atendentes_pendentes.log
+atendente_mensagens.log
+
+# Arquivos de erro do Chrome/Chromium
+CrashpadMetrics-*.pma
+*.pma
+
+# Arquivos do sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Arquivos temporários
+*.tmp
+*.temp
